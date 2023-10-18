@@ -1,0 +1,215 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiClient.h>
+#include <WiFiAP.h>
+//************************************************************************************************/
+#define DwinSerial Serial2
+
+const char *ssidAP = "TENSIOMETERNG";
+const char *passAP = "12345678";
+
+WiFiServer Server(90);
+WiFiClient clients[6];
+
+void DGUS_SendVal(int iAdr, int iVal)
+{
+  // static unsigned long timeSend=millis();
+  // if(millis()-timeSend>100){
+  byte bAdrL, bAdrH, bValL, bValH;
+  bAdrL = iAdr & 0xFF;
+  bAdrH = (iAdr >> 8) & 0xFF;
+  bValL = iVal & 0xFF;
+  bValH = (iVal >> 8) & 0xFF;
+  DwinSerial.write(0x5A);
+  DwinSerial.write(0xA5);
+  DwinSerial.write(0x05);
+  DwinSerial.write(0x82);
+  DwinSerial.write(bAdrH);
+  DwinSerial.write(bAdrL);
+  DwinSerial.write(bValH);
+  DwinSerial.write(bValL);
+  // timeSend=millis();
+  // }
+}
+
+void parseString(const String &input, int &order, float &value1, int &value2)
+{
+  int commaPos = input.indexOf(",");
+
+  if (commaPos != -1)
+  {
+    order = input.substring(0, commaPos).toInt();
+    int colonPos = input.indexOf(":");
+
+    if (colonPos != -1)
+    {
+      String values = input.substring(colonPos + 1);
+      values.trim();
+      int secondCommaPos = values.indexOf(",");
+
+      if (secondCommaPos != -1)
+      {
+        String value1Str = values.substring(0, secondCommaPos);
+        value1 = value1Str.toFloat();
+
+        String value2Str = values.substring(secondCommaPos + 1);
+        value2 = value2Str.toInt();
+      }
+    }
+  }
+}
+
+void FloatToHex(float f, byte *hex)
+{
+  byte *f_byte = reinterpret_cast<byte *>(&f);
+  memcpy(hex, f_byte, 4);
+}
+// Giá trị hiển thị lên DWIN float 4 Byte
+void sendFloatNumber(float floatValue, long VPAddress)
+{
+  byte bAdrL, bAdrH, bValL, bValH;
+  bAdrL = VPAddress & 0xFF;
+  bAdrH = (VPAddress >> 8) & 0xFF;
+
+  DwinSerial.write(0x5A);
+  DwinSerial.write(0xA5);
+  DwinSerial.write(0x07);
+  DwinSerial.write(0x82);
+  DwinSerial.write(bAdrH);
+  DwinSerial.write(bAdrL);
+
+  byte hex[4] = {0}; // create a hex array for the 4 bytes
+
+  FloatToHex(floatValue, hex);
+  DwinSerial.write(hex[3]);
+  DwinSerial.write(hex[2]);
+  DwinSerial.write(hex[1]);
+  DwinSerial.write(hex[0]);
+}
+
+void ShowBatDisplay()
+{
+  DGUS_SendVal(0x1007, 50);
+}
+
+void DGUS_Trend1(int iVal) {
+  byte bValL, bValH;
+  bValL = iVal & 0xFF;
+  bValH = (iVal >> 8) & 0xFF;
+  Serial2.write(0x5A);
+  Serial2.write(0xA5);
+  Serial2.write(0x0d);
+  Serial2.write(0x82);
+  Serial2.write(0x03);
+  Serial2.write(0x10);
+
+  Serial2.write(0x5A);
+  Serial2.write(0xA5);
+  Serial2.write(0x01);
+  Serial2.write(0x00);
+  Serial2.write(0x00);
+  Serial2.write(0x02);  //2Byte data
+
+  Serial2.write(0x00);  //
+  Serial2.write(0x00);  // Data tobe display 0
+  Serial2.write(bValH);
+  Serial2.write(bValL);  // Data tobe displayed 1000
+}
+
+void DGUS_Beep(byte bTime)  // Beep generate bTime*10ms
+{
+  Serial2.write(0x5A);
+  Serial2.write(0xA5);
+  Serial2.write(0x03);
+  Serial2.write(0x80);
+  Serial2.write(0x02);
+  Serial2.write(bTime);
+}//************************************************************************************************/
+
+void setup()
+{
+  Serial.begin(115200);
+  Serial1.begin(115200); // ứng với UART1
+  Serial2.begin(115200); // ứng với UART2
+
+  WiFi.softAP(ssidAP, passAP);
+
+  Server.begin();
+  Serial.println("Server started");
+}
+
+void loop()
+{
+  // Test Values
+  // DGUS_SendVal(0x1007, 50);
+  // sendFloatNumber(35.5, 0x1050);
+  // sendFloatNumber(35.6, 0x1060);
+  // sendFloatNumber(35.7, 0x1070);
+  // sendFloatNumber(35.8, 0x1080);
+  // sendFloatNumber(35.9, 0x1090);
+  // sendFloatNumber(40.1, 0x2000);
+
+  DGUS_SendVal(0x1010, (int)10); // Phần trăm Pin
+  DGUS_SendVal(0x1011, (int)11); // Phần trăm Pin
+  DGUS_SendVal(0x1012, (int)85); // Phần trăm Pin
+  DGUS_SendVal(0x1013, (int)27); // Nhiệt độ
+
+  for (int i = 0; i < 6; i++)
+  {
+    if (!clients[i] || !clients[i].connected())
+    {
+      clients[i] = Server.available();
+      if (clients[i])
+      {
+        Serial.println("New client connected");
+      }
+    }
+  }
+
+  for (int i = 0; i < 6; i++)
+  {
+    if (clients[i] && clients[i].connected())
+    {
+      if (clients[i].available())
+      {
+        String request = clients[i].readStringUntil('\r');
+        Serial.println("Received from Client " + String(i) + ": " + request); //"6,pre: 04.32, bat: 100"
+        //parseString(request, order, Presure, PercentBAT);
+
+        // int addpresure = order * 10 + 1050;
+
+        // if (addpresure == 1050)
+        // {
+        //   sendFloatNumber(Presure, 0x1050);
+        // }
+        // if (addpresure == 1060)
+        // {
+        //   sendFloatNumber(Presure, 0x1060);
+        // }
+        // if (addpresure == 1070)
+        // {
+        //   sendFloatNumber(Presure, 0x1070);
+        // }
+        // if (addpresure == 1080)
+        // {
+        //   sendFloatNumber(Presure, 0x1080);
+        // }
+        // if (addpresure == 1090)
+        // {
+        //   sendFloatNumber(Presure, 0x1090);
+        // }
+        // if (addpresure == 2000)
+        // {
+        //   sendFloatNumber(Presure, 0x2000);
+        // }
+        // Xử lý dữ liệu ở đây
+        // Ví dụ: gửi phản hồi cho client
+        String response = "OK";
+        clients[i].println(response);
+        delay(10);
+      }
+    }
+  }
+  // Read values from Battery
+}
+//************************************************************************************************/
